@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -208,10 +209,10 @@ func questionAnswerHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 			return
 		}
 		defer info.Timer.Stop()
+		info.Question = 6
 		err := postChanges(info)
 		if err != nil {
 			_, _ = s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("Failed to upload changes:\n%s", err.Error()), m.Reference())
-			return
 		}
 
 		msg := m.Message
@@ -220,10 +221,34 @@ func questionAnswerHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 			err := postMedia(attachment, info.Session)
 			if err != nil {
 				msg, _ = s.ChannelMessageSendReply(msg.ChannelID, err.Error(), msg.Reference())
+				continue
 			}
+			msg, _ = s.ChannelMessageSendReply(msg.ChannelID, attachment.Filename+" posted successfully", msg.Reference())
+		}
+
+		msg, _ = s.ChannelMessageSendReply(m.ChannelID, "Upload a profile photo you want to set.", m.Reference())
+		info.Timer = time.AfterFunc(60*time.Second, func() {
+			delete(InfoMap, key)
+			_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
+		})
+		return
+	case 6:
+		attachments := m.Attachments
+		if len(attachments) == 0 {
+			_, _ = s.ChannelMessageSendReply(m.ChannelID, "Please provide an image to set as pfp", m.Reference())
+			return
+		}
+		defer info.Timer.Stop()
+		pfp := attachments[0]
+		err := postAvatar(pfp, info.Session)
+		if err != nil {
+			_, _ = s.ChannelMessageSendReply(m.ChannelID, err.Error(), m.Reference())
 		}
 		_, _ = s.ChannelMessageSendEmbedReply(m.ChannelID, &discordgo.MessageEmbed{
 			Title: "Your Account is ready to be used.",
+			Image: &discordgo.MessageEmbedImage{
+				URL: pfp.URL,
+			},
 			Fields: []*discordgo.MessageEmbedField{
 				{
 					Name:  "Name",
@@ -341,6 +366,45 @@ func postMedia(attachment *discordgo.MessageAttachment, sessionId string) error 
 		return nil
 	} else {
 		return fmt.Errorf("erro uploading photo")
+	}
+}
+func postAvatar(attachment *discordgo.MessageAttachment, sessionId string) error {
+	response, err := http.DefaultClient.Get(attachment.URL)
+	if err != nil {
+		return err
+	}
+	photo := response.Body
+	apiUrl := "https://i.instagram.com/accounts/web_change_profile_picture/"
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, _ := writer.CreateFormFile("profile_pic", attachment.Filename)
+	_, err = io.Copy(part, photo)
+	if err != nil {
+		return err
+	}
+	err = writer.Close()
+	if err != nil {
+		return err
+	}
+	req, _ := http.NewRequest("POST", apiUrl, body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.90 Safari/537.36")
+	req.Header.Set("x-csrftoken", "ARD4xPQFO8DvEghBR6ylbiSx7NSVwMs5")
+	req.Header.Set("X-Instagram-AJAX", "7a3a3e64fa87")
+	req.Header.Set("Cookie", fmt.Sprintf("mid=YGB8ogALAAESePCJAlGFMopcXIgR; csrftoken=ARD4xPQFO8DvEghBR6ylbiSx7NSVwMs5; sessionid=%s", sessionId))
+	client := &http.Client{}
+	resp, _ := client.Do(req)
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			return
+		}
+	}(resp.Body)
+	respBody, _ := io.ReadAll(resp.Body)
+	if bytes.Contains(respBody, []byte("has_profile_pic\":true")) {
+		return nil
+	} else {
+		return fmt.Errorf("error: Did Not Change")
 	}
 }
 
