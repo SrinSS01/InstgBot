@@ -102,6 +102,7 @@ func onReady(s *discordgo.Session, _ *discordgo.Ready) {
 }
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	authorId := m.Author.ID
+	key := authorId + m.GuildID
 	if authorId == s.State.User.ID {
 		return
 	}
@@ -125,7 +126,6 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 	username := response["username"]
-	key := authorId + m.GuildID
 	info := InfoMap[key]
 	if info == nil {
 		InfoMap[key] = &Info{
@@ -154,6 +154,11 @@ func questionAnswerHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 	key := authorId + m.GuildID
 	info := InfoMap[key]
 	if info == nil {
+		return
+	}
+	if match, _ := regexp.MatchString("^-cancelacc$", m.Content); match {
+		_, _ = s.ChannelMessageSendReply(m.ChannelID, "Cancelling process...", m.Reference())
+		delete(InfoMap, key)
 		return
 	}
 	content := m.Content
