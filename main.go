@@ -33,6 +33,7 @@ type Info struct {
 	Phone    string
 	Timer    *time.Timer
 	Question int
+	Posts    []string
 }
 
 var (
@@ -41,8 +42,10 @@ var (
 	sessionObj = session.Session{
 		Sessions: []string{},
 	}
-	accRegex, _ = regexp.Compile("^-acc(?: +(?P<sessionid>.+))?$")
-	InfoMap     = map[string]*Info{}
+	accRegex, _      = regexp.Compile("^-acc(?: +(?P<sessionid>.+))?$")
+	postCodeRegex, _ = regexp.Compile("\"code\":\"(?P<code>\\w*)\"")
+	InfoMap          = map[string]*Info{}
+	timeOut          = 5 * time.Minute
 )
 
 func init() {
@@ -117,11 +120,11 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		sessionObj.Sessions = sessionObj.Sessions[1:]
 	}
 	response, err := getInfoFromSession(sessionId)
-	username := response["username"]
 	if err != nil {
 		_, _ = s.ChannelMessageSendReply(msg.ChannelID, err.Error(), msg.Reference())
 		return
 	}
+	username := response["username"]
 	key := authorId + m.GuildID
 	info := InfoMap[key]
 	if info == nil {
@@ -132,10 +135,12 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	info = InfoMap[key]
 	info.Question = 1
 	info.Session = sessionId
+	info.Bio = response["biography"].(string)
+	info.URL = response["external_url"].(string)
 	info.Email = response["email"].(string)
 	info.Phone = response["phone_number"].(string)
 	msg, _ = s.ChannelMessageSendReply(msg.ChannelID, fmt.Sprintf("The current username is **@%s**, the new username should be?", username), msg.Reference())
-	info.Timer = time.AfterFunc(60*time.Second, func() {
+	info.Timer = time.AfterFunc(timeOut, func() {
 		delete(InfoMap, key)
 		_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
 	})
@@ -163,7 +168,7 @@ func questionAnswerHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 		err := postChanges(info)
 		if err != nil {
 			msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), m.Reference())
-			info.Timer = time.AfterFunc(60*time.Second, func() {
+			info.Timer = time.AfterFunc(timeOut, func() {
 				delete(InfoMap, key)
 				_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
 			})
@@ -171,74 +176,74 @@ func questionAnswerHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 		}
 		info.Question = 2
 		msg, _ := s.ChannelMessageSendReply(m.ChannelID, "Provide the Name?", m.Reference())
-		info.Timer = time.AfterFunc(60*time.Second, func() {
+		info.Timer = time.AfterFunc(timeOut, func() {
 			delete(InfoMap, key)
 			_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
 		})
 		return
 	case 2:
+		defer info.Timer.Stop()
 		if content != "-" {
 			info.Name = content
-		}
-		defer info.Timer.Stop()
-		err := postChanges(info)
-		if err != nil {
-			msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), m.Reference())
-			info.Timer = time.AfterFunc(60*time.Second, func() {
-				delete(InfoMap, key)
-				_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
-			})
-			return
+			err := postChanges(info)
+			if err != nil {
+				msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), m.Reference())
+				info.Timer = time.AfterFunc(timeOut, func() {
+					delete(InfoMap, key)
+					_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
+				})
+				return
+			}
 		}
 		info.Question = 3
 		msg, _ := s.ChannelMessageSendReply(m.ChannelID, "Could you provide your bio information?", m.Reference())
-		info.Timer = time.AfterFunc(60*time.Second, func() {
+		info.Timer = time.AfterFunc(timeOut, func() {
 			delete(InfoMap, key)
 			_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
 		})
 		return
 	case 3:
+		defer info.Timer.Stop()
 		if content != "-" {
 			info.Bio = content
-		}
-		defer info.Timer.Stop()
-		err := postChanges(info)
-		if err != nil {
-			msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), m.Reference())
-			info.Timer = time.AfterFunc(60*time.Second, func() {
-				delete(InfoMap, key)
-				_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
-			})
-			return
+			err := postChanges(info)
+			if err != nil {
+				msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), m.Reference())
+				info.Timer = time.AfterFunc(timeOut, func() {
+					delete(InfoMap, key)
+					_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
+				})
+				return
+			}
 		}
 		info.Question = 4
 		msg, _ := s.ChannelMessageSendReply(m.ChannelID, "What’s the URL you would like to use?", m.Reference())
-		info.Timer = time.AfterFunc(60*time.Second, func() {
+		info.Timer = time.AfterFunc(timeOut, func() {
 			delete(InfoMap, key)
 			_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
 		})
 		return
 	case 4:
+		defer info.Timer.Stop()
 		if content != "-" {
 			if res, _ := regexp.MatchString("https?://(www\\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}\\.[a-zA-Z0-9()]{1,6}\\b([-a-zA-Z0-9()@:%_+.~#?&/=]*)", content); !res {
 				_, _ = s.ChannelMessageSendReply(m.ChannelID, "Please enter a valid url", m.Reference())
 				return
 			}
 			info.URL = content
-		}
-		defer info.Timer.Stop()
-		err := postChanges(info)
-		if err != nil {
-			msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), m.Reference())
-			info.Timer = time.AfterFunc(60*time.Second, func() {
-				delete(InfoMap, key)
-				_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
-			})
-			return
+			err := postChanges(info)
+			if err != nil {
+				msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), m.Reference())
+				info.Timer = time.AfterFunc(timeOut, func() {
+					delete(InfoMap, key)
+					_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
+				})
+				return
+			}
 		}
 		info.Question = 5
 		msg, _ := s.ChannelMessageSendReply(m.ChannelID, "Upload the Posts you want to add.", m.Reference())
-		info.Timer = time.AfterFunc(60*time.Second, func() {
+		info.Timer = time.AfterFunc(timeOut, func() {
 			delete(InfoMap, key)
 			_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
 		})
@@ -250,21 +255,26 @@ func questionAnswerHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 			return
 		}
 		defer info.Timer.Stop()
-		info.Question = 6
 
 		msg := m.Message
 
 		for _, attachment := range attachments {
-			err := postMedia(attachment, info.Session)
+			code, err := postMedia(attachment, info.Session)
 			if err != nil {
-				msg, _ = s.ChannelMessageSendReply(msg.ChannelID, err.Error(), msg.Reference())
-				continue
+				msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), m.Reference())
+				info.Timer = time.AfterFunc(timeOut, func() {
+					delete(InfoMap, key)
+					_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
+				})
+				return
 			}
+			info.Posts = append(info.Posts, "https://instagram.com/p/"+code)
 			msg, _ = s.ChannelMessageSendReply(msg.ChannelID, attachment.Filename+" posted successfully", msg.Reference())
 		}
+		info.Question = 6
 
 		msg, _ = s.ChannelMessageSendReply(m.ChannelID, "Upload a profile photo you want to set.", m.Reference())
-		info.Timer = time.AfterFunc(60*time.Second, func() {
+		info.Timer = time.AfterFunc(timeOut, func() {
 			delete(InfoMap, key)
 			_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
 		})
@@ -280,13 +290,13 @@ func questionAnswerHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 		err := postAvatar(pfp, info.Session)
 		if err != nil {
 			msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("Failed to upload pfp\n```\n%s\n```\nPlease try again", err.Error()), m.Reference())
-			info.Timer = time.AfterFunc(60*time.Second, func() {
+			info.Timer = time.AfterFunc(timeOut, func() {
 				delete(InfoMap, key)
 				_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
 			})
 			return
 		}
-		_, _ = s.ChannelMessageSendEmbedReply(m.ChannelID, &discordgo.MessageEmbed{
+		msg, _ := s.ChannelMessageSendEmbedReply(m.ChannelID, &discordgo.MessageEmbed{
 			Title: "Your Account is ready to be used.",
 			Image: &discordgo.MessageEmbedImage{
 				URL: pfp.URL,
@@ -310,21 +320,22 @@ func questionAnswerHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 				},
 			},
 		}, m.Reference())
+		_, _ = s.ChannelMessageSendReply(msg.ChannelID, fmt.Sprintf("%s\n%s", "https://instagram.com/"+info.Username, info.Posts), msg.Reference())
 		delete(InfoMap, key)
 	}
 }
 
-func postMedia(attachment *discordgo.MessageAttachment, sessionId string) error {
+func postMedia(attachment *discordgo.MessageAttachment, sessionId string) (string, error) {
 	timestamp := strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10)
 	request := resty.New().R()
 	response, err := request.Get(attachment.URL)
 	if err != nil {
-		return err
+		return "", err
 	}
 	photo := response.Body()
 	req, err := http.NewRequest("POST", "https://i.instagram.com/rupload_igphoto/fb_uploader_"+timestamp, bytes.NewBuffer(photo))
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	req.Header.Set("Host", "i.instagram.com")
@@ -348,7 +359,7 @@ func postMedia(attachment *discordgo.MessageAttachment, sessionId string) error 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 	defer func(Body io.ReadCloser) {
 		err := Body.Close()
@@ -371,7 +382,7 @@ func postMedia(attachment *discordgo.MessageAttachment, sessionId string) error 
 
 	reqs, err := http.NewRequest("POST", "https://www.instagram.com/api/v1/media/configure/", bytes.NewBufferString(formData.Encode()))
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 
 	reqs.Header.Set("Host", "www.instagram.com")
@@ -394,7 +405,7 @@ func postMedia(attachment *discordgo.MessageAttachment, sessionId string) error 
 	clients := &http.Client{}
 	resps, err := clients.Do(reqs)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer func(Body io.ReadCloser) {
 		err := Body.Close()
@@ -402,13 +413,18 @@ func postMedia(attachment *discordgo.MessageAttachment, sessionId string) error 
 			return
 		}
 	}(resp.Body)
-	b, _ := io.ReadAll(resps.Body)
-	if strings.Contains(string(b), "\"status\":\"ok\"") {
-		fmt.Println("Successfully Upload Photo")
-		return nil
-	} else {
-		return fmt.Errorf("erro uploading photo")
+	b, err := io.ReadAll(resps.Body)
+	if err != nil {
+		return "", err
 	}
+	str := string(b)
+	if strings.Contains(str, "\"status\":\"ok\"") {
+		matches := postCodeRegex.FindStringSubmatch(str)
+		if len(matches) != 0 {
+			return matches[postCodeRegex.SubexpIndex("code")], nil
+		}
+	}
+	return "", fmt.Errorf("erro uploading photo")
 }
 func postAvatar(attachment *discordgo.MessageAttachment, sessionId string) error {
 	response, err := http.DefaultClient.Get(attachment.URL)
@@ -489,7 +505,13 @@ func postChanges(info *Info) error {
 	}
 	if status, ok := JSON["status"].(string); ok {
 		if status != "ok" {
-			return fmt.Errorf("%s", JSON["message"].(map[string]interface{})["errors"])
+			if message, ok := JSON["message"].(map[string]interface{}); ok {
+				return fmt.Errorf("%s", message["errors"])
+			}
+
+			if message, ok := JSON["message"].(string); ok {
+				return fmt.Errorf("%s", message)
+			}
 		}
 		return nil
 	}
@@ -518,7 +540,23 @@ func getInfoFromSession(session string) (map[string]interface{}, error) {
 	}
 	if status, ok := res["status"].(string); ok {
 		if status != "ok" {
-			return nil, fmt.Errorf("%s\n%s", res["error_title"], res["error_body"])
+			errTitle := res["error_title"]
+			errBody := res["error_body"]
+			message := res["message"]
+			builder := strings.Builder{}
+			if errTitle != nil {
+				builder.WriteString(errTitle.(string))
+				builder.WriteByte('\n')
+			}
+			if errBody != nil {
+				builder.WriteString(errBody.(string))
+				builder.WriteByte('\n')
+			}
+			if message != nil {
+				builder.WriteString(message.(string))
+				builder.WriteByte('\n')
+			}
+			return nil, fmt.Errorf("%s", builder.String())
 		}
 		return res["user"].(map[string]interface{}), nil
 	}
