@@ -109,6 +109,10 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	msg, _ := s.ChannelMessageSendReply(m.ChannelID, "Processing...", m.Reference())
 	sessionId := matches[accRegex.SubexpIndex("sessionid")]
 	if sessionId == "" {
+		if len(sessionObj.Sessions) == 0 {
+			_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Please provide a session to continue...", msg.Reference())
+			return
+		}
 		sessionId = sessionObj.Sessions[0]
 		sessionObj.Sessions = sessionObj.Sessions[1:]
 	}
@@ -156,6 +160,15 @@ func questionAnswerHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 		}
 		info.Username = content
 		defer info.Timer.Stop()
+		err := postChanges(info)
+		if err != nil {
+			msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), m.Reference())
+			info.Timer = time.AfterFunc(60*time.Second, func() {
+				delete(InfoMap, key)
+				_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
+			})
+			return
+		}
 		info.Question = 2
 		msg, _ := s.ChannelMessageSendReply(m.ChannelID, "Provide the Name?", m.Reference())
 		info.Timer = time.AfterFunc(60*time.Second, func() {
@@ -168,6 +181,15 @@ func questionAnswerHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 			info.Name = content
 		}
 		defer info.Timer.Stop()
+		err := postChanges(info)
+		if err != nil {
+			msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), m.Reference())
+			info.Timer = time.AfterFunc(60*time.Second, func() {
+				delete(InfoMap, key)
+				_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
+			})
+			return
+		}
 		info.Question = 3
 		msg, _ := s.ChannelMessageSendReply(m.ChannelID, "Could you provide your bio information?", m.Reference())
 		info.Timer = time.AfterFunc(60*time.Second, func() {
@@ -180,6 +202,15 @@ func questionAnswerHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 			info.Bio = content
 		}
 		defer info.Timer.Stop()
+		err := postChanges(info)
+		if err != nil {
+			msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), m.Reference())
+			info.Timer = time.AfterFunc(60*time.Second, func() {
+				delete(InfoMap, key)
+				_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
+			})
+			return
+		}
 		info.Question = 4
 		msg, _ := s.ChannelMessageSendReply(m.ChannelID, "What’s the URL you would like to use?", m.Reference())
 		info.Timer = time.AfterFunc(60*time.Second, func() {
@@ -196,13 +227,16 @@ func questionAnswerHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 			info.URL = content
 		}
 		defer info.Timer.Stop()
-		info.Question = 5
 		err := postChanges(info)
 		if err != nil {
-			_, _ = s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("Failed to upload changes:\n%s", err.Error()), m.Reference())
-			delete(InfoMap, key)
+			msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), m.Reference())
+			info.Timer = time.AfterFunc(60*time.Second, func() {
+				delete(InfoMap, key)
+				_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
+			})
 			return
 		}
+		info.Question = 5
 		msg, _ := s.ChannelMessageSendReply(m.ChannelID, "Upload the Posts you want to add.", m.Reference())
 		info.Timer = time.AfterFunc(60*time.Second, func() {
 			delete(InfoMap, key)
@@ -245,7 +279,12 @@ func questionAnswerHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 		pfp := attachments[0]
 		err := postAvatar(pfp, info.Session)
 		if err != nil {
-			_, _ = s.ChannelMessageSendReply(m.ChannelID, err.Error(), m.Reference())
+			msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("Failed to upload pfp\n```\n%s\n```\nPlease try again", err.Error()), m.Reference())
+			info.Timer = time.AfterFunc(60*time.Second, func() {
+				delete(InfoMap, key)
+				_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
+			})
+			return
 		}
 		_, _ = s.ChannelMessageSendEmbedReply(m.ChannelID, &discordgo.MessageEmbed{
 			Title: "Your Account is ready to be used.",
