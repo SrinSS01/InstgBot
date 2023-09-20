@@ -48,6 +48,7 @@ var (
 func init() {
 	file, err := os.ReadFile("session.json")
 	if err != nil {
+		saveSession()
 		return
 	}
 	if err := json.Unmarshal(file, &sessionObj); err != nil {
@@ -129,7 +130,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	info.Session = sessionId
 	info.Email = response["email"].(string)
 	info.Phone = response["phone_number"].(string)
-	msg, _ = s.ChannelMessageSendReply(msg.ChannelID, fmt.Sprintf("The current username @%s, the new username should be?", username), msg.Reference())
+	msg, _ = s.ChannelMessageSendReply(msg.ChannelID, fmt.Sprintf("The current username is **@%s**, the new username should be?", username), msg.Reference())
 	info.Timer = time.AfterFunc(60*time.Second, func() {
 		delete(InfoMap, key)
 		_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
@@ -196,6 +197,12 @@ func questionAnswerHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 		}
 		defer info.Timer.Stop()
 		info.Question = 5
+		err := postChanges(info)
+		if err != nil {
+			_, _ = s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("Failed to upload changes:\n%s", err.Error()), m.Reference())
+			delete(InfoMap, key)
+			return
+		}
 		msg, _ := s.ChannelMessageSendReply(m.ChannelID, "Upload the Posts you want to add.", m.Reference())
 		info.Timer = time.AfterFunc(60*time.Second, func() {
 			delete(InfoMap, key)
@@ -210,10 +217,6 @@ func questionAnswerHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 		}
 		defer info.Timer.Stop()
 		info.Question = 6
-		err := postChanges(info)
-		if err != nil {
-			_, _ = s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("Failed to upload changes:\n%s", err.Error()), m.Reference())
-		}
 
 		msg := m.Message
 
