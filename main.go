@@ -1,51 +1,51 @@
 package main
 
 import (
+	"InstgBot/commands"
 	"InstgBot/config"
-	"InstgBot/session"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/bwmarrin/discordgo"
-	"github.com/go-resty/resty/v2"
-	"github.com/google/uuid"
-	"io"
 	"log"
-	"mime/multipart"
-	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"regexp"
-	"strconv"
-	"strings"
 	"syscall"
-	"time"
 )
 
-type Info struct {
-	Session  string
-	Username string
-	Name     string
-	Bio      string
-	URL      string
-	Email    string
-	Phone    string
-	Timer    *time.Timer
-	Question int
-	Posts    []string
+type Execute struct {
+	Slash func(*discordgo.Session, *discordgo.InteractionCreate)
+	Dash  func(*discordgo.Session, *discordgo.MessageCreate, string)
 }
 
 var (
-	discord    *discordgo.Session
-	cnfg       = config.Config{}
-	sessionObj = session.Session{
-		Sessions: []string{},
+	discord *discordgo.Session
+	cnfg    = config.Config{}
+	//accRegex      = regexp.MustCompile("^-acc(?: +(?P<sessionid>.+))?$")
+	dashCommandRegex = regexp.MustCompile("-(?P<name>[\\w-]+)(?:\\s+(?P<args>.+))?")
+	cmds             = []*discordgo.ApplicationCommand{
+		commands.Acc.Command,
+		commands.CancelAcc.Command,
+		commands.AddSessionId.Command,
+		commands.Copy.Command,
 	}
-	accRegex, _      = regexp.Compile("^-acc(?: +(?P<sessionid>.+))?$")
-	postCodeRegex, _ = regexp.Compile("\"code\":\"(?P<code>\\w*)\"")
-	InfoMap          = map[string]*Info{}
-	timeOut          = 5 * time.Minute
+	commandHandlers = map[string]*Execute{
+		commands.Acc.Command.Name: {
+			Slash: commands.Acc.ExecuteSlash,
+			Dash:  commands.Acc.ExecuteDash,
+		},
+		commands.CancelAcc.Command.Name: {
+			Slash: commands.CancelAcc.ExecuteSlash,
+			Dash:  commands.CancelAcc.ExecuteDash,
+		},
+		commands.AddSessionId.Command.Name: {
+			Slash: commands.AddSessionId.ExecuteSlash,
+		},
+		commands.Copy.Command.Name: {
+			Slash: commands.Copy.ExecuteSlash,
+			Dash:  commands.Copy.ExecuteDash,
+		},
+	}
 )
 
 func init() {
@@ -54,7 +54,7 @@ func init() {
 		saveSession()
 		return
 	}
-	if err := json.Unmarshal(file, &sessionObj); err != nil {
+	if err := json.Unmarshal(file, &commands.SessionObj); err != nil {
 		log.Fatal("Error during Unmarshal(): ", err)
 	}
 }
@@ -65,6 +65,14 @@ func init() {
 		fmt.Print("Enter bot token: ")
 		if _, err := fmt.Scanln(&cnfg.Token); err != nil {
 			log.Fatal("Error during Scanln(): ", err)
+		}
+		print("Enter api key: ")
+		if _, err := fmt.Scanln(&cnfg.ApiKey); err != nil {
+			log.Fatal("Error during Scanln(): ", err.Error())
+		}
+		print("Enter api url: ")
+		if _, err := fmt.Scanln(&cnfg.ApiUrl); err != nil {
+			log.Fatal("Error during Scanln(): ", err.Error())
 		}
 		configJson()
 		return
@@ -86,7 +94,7 @@ func configJson() {
 }
 
 func saveSession() {
-	marshal, err := json.Marshal(&sessionObj)
+	marshal, err := json.Marshal(&commands.SessionObj)
 	if err != nil {
 		log.Fatal("Error during Marshal(): ", err)
 		return
@@ -101,474 +109,32 @@ func onReady(s *discordgo.Session, _ *discordgo.Ready) {
 	log.Println(s.State.User.Username + " is ready")
 }
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
-	authorId := m.Author.ID
-	key := authorId + m.GuildID
-	if authorId == s.State.User.ID {
+	if m.Author.ID == s.State.User.ID {
 		return
 	}
-	matches := accRegex.FindStringSubmatch(m.Content)
+	matches := dashCommandRegex.FindStringSubmatch(m.Content)
 	if len(matches) == 0 {
 		return
 	}
-	msg, _ := s.ChannelMessageSendReply(m.ChannelID, "Processing...", m.Reference())
-	sessionId := matches[accRegex.SubexpIndex("sessionid")]
-	if sessionId == "" {
-		if len(sessionObj.Sessions) == 0 {
-			_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Please provide a session to continue...", msg.Reference())
-			return
-		}
-		sessionId = sessionObj.Sessions[0]
-		sessionObj.Sessions = sessionObj.Sessions[1:]
-	}
-	response, err := getInfoFromSession(sessionId)
-	if err != nil {
-		_, _ = s.ChannelMessageSendReply(msg.ChannelID, err.Error(), msg.Reference())
+	name := matches[dashCommandRegex.SubexpIndex("name")]
+	args := matches[dashCommandRegex.SubexpIndex("args")]
+	f := commandHandlers[name]
+	if f == nil {
 		return
 	}
-	username := response["username"]
-	info := InfoMap[key]
-	if info == nil {
-		InfoMap[key] = &Info{
-			Question: 0,
-		}
-	}
-	info = InfoMap[key]
-	info.Question = 1
-	info.Session = sessionId
-	info.Bio = response["biography"].(string)
-	info.URL = response["external_url"].(string)
-	info.Email = response["email"].(string)
-	info.Phone = response["phone_number"].(string)
-	msg, _ = s.ChannelMessageSendReply(msg.ChannelID, fmt.Sprintf("The current username is **@%s**, the new username should be?", username), msg.Reference())
-	info.Timer = time.AfterFunc(timeOut, func() {
-		delete(InfoMap, key)
-		_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
-	})
+	_, _ = s.ChannelMessageSendReply(m.ChannelID, "Processing...", m.Reference())
+	f.Dash(s, m, args)
 }
 
-func questionAnswerHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
-	authorId := m.Author.ID
-	if authorId == s.State.User.ID {
+func slashCommandInteraction(session *discordgo.Session, interaction *discordgo.InteractionCreate) {
+	if interaction.Type != discordgo.InteractionApplicationCommand {
 		return
 	}
-	key := authorId + m.GuildID
-	info := InfoMap[key]
-	if info == nil {
-		return
-	}
-	if match, _ := regexp.MatchString("^-cancelacc$", m.Content); match {
-		_, _ = s.ChannelMessageSendReply(m.ChannelID, "Cancelling process...", m.Reference())
-		delete(InfoMap, key)
-		return
-	}
-	content := m.Content
-	switch info.Question {
-	case 1:
-		if matched, _ := regexp.MatchString("^[A-Za-z]\\w{5,29}$", content); !matched {
-			_, _ = s.ChannelMessageSendReply(m.ChannelID, "Please enter a valid username", m.Reference())
-			return
-		}
-		info.Username = content
-		defer info.Timer.Stop()
-		err := postChanges(info)
-		if err != nil {
-			msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), m.Reference())
-			info.Timer = time.AfterFunc(timeOut, func() {
-				delete(InfoMap, key)
-				_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
-			})
-			return
-		}
-		info.Question = 2
-		msg, _ := s.ChannelMessageSendReply(m.ChannelID, "Provide the Name?", m.Reference())
-		info.Timer = time.AfterFunc(timeOut, func() {
-			delete(InfoMap, key)
-			_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
-		})
-		return
-	case 2:
-		defer info.Timer.Stop()
-		if content != "-" {
-			info.Name = content
-			err := postChanges(info)
-			if err != nil {
-				msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), m.Reference())
-				info.Timer = time.AfterFunc(timeOut, func() {
-					delete(InfoMap, key)
-					_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
-				})
-				return
-			}
-		}
-		info.Question = 3
-		msg, _ := s.ChannelMessageSendReply(m.ChannelID, "Could you provide your bio information?", m.Reference())
-		info.Timer = time.AfterFunc(timeOut, func() {
-			delete(InfoMap, key)
-			_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
-		})
-		return
-	case 3:
-		defer info.Timer.Stop()
-		if content != "-" {
-			info.Bio = content
-			err := postChanges(info)
-			if err != nil {
-				msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), m.Reference())
-				info.Timer = time.AfterFunc(timeOut, func() {
-					delete(InfoMap, key)
-					_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
-				})
-				return
-			}
-		}
-		info.Question = 4
-		msg, _ := s.ChannelMessageSendReply(m.ChannelID, "What’s the URL you would like to use?", m.Reference())
-		info.Timer = time.AfterFunc(timeOut, func() {
-			delete(InfoMap, key)
-			_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
-		})
-		return
-	case 4:
-		defer info.Timer.Stop()
-		if content != "-" {
-			if res, _ := regexp.MatchString("https?://(www\\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}\\.[a-zA-Z0-9()]{1,6}\\b([-a-zA-Z0-9()@:%_+.~#?&/=]*)", content); !res {
-				_, _ = s.ChannelMessageSendReply(m.ChannelID, "Please enter a valid url", m.Reference())
-				return
-			}
-			info.URL = content
-			err := postChanges(info)
-			if err != nil {
-				msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), m.Reference())
-				info.Timer = time.AfterFunc(timeOut, func() {
-					delete(InfoMap, key)
-					_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
-				})
-				return
-			}
-		}
-		info.Question = 5
-		msg, _ := s.ChannelMessageSendReply(m.ChannelID, "Upload the Posts you want to add.", m.Reference())
-		info.Timer = time.AfterFunc(timeOut, func() {
-			delete(InfoMap, key)
-			_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
-		})
-		return
-	case 5:
-		attachments := m.Attachments
-		if len(attachments) == 0 {
-			_, _ = s.ChannelMessageSendReply(m.ChannelID, "Please provide an image to post", m.Reference())
-			return
-		}
-		defer info.Timer.Stop()
-
-		msg := m.Message
-
-		for _, attachment := range attachments {
-			code, err := postMedia(attachment, info.Session)
-			if err != nil {
-				msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), m.Reference())
-				info.Timer = time.AfterFunc(timeOut, func() {
-					delete(InfoMap, key)
-					_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
-				})
-				return
-			}
-			info.Posts = append(info.Posts, "https://instagram.com/p/"+code)
-			msg, _ = s.ChannelMessageSendReply(msg.ChannelID, attachment.Filename+" posted successfully", msg.Reference())
-		}
-		info.Question = 6
-
-		msg, _ = s.ChannelMessageSendReply(m.ChannelID, "Upload a profile photo you want to set.", m.Reference())
-		info.Timer = time.AfterFunc(timeOut, func() {
-			delete(InfoMap, key)
-			_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
-		})
-		return
-	case 6:
-		attachments := m.Attachments
-		if len(attachments) == 0 {
-			_, _ = s.ChannelMessageSendReply(m.ChannelID, "Please provide an image to set as pfp", m.Reference())
-			return
-		}
-		defer info.Timer.Stop()
-		pfp := attachments[0]
-		err := postAvatar(pfp, info.Session)
-		if err != nil {
-			msg, _ := s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("Failed to upload pfp\n```\n%s\n```\nPlease try again", err.Error()), m.Reference())
-			info.Timer = time.AfterFunc(timeOut, func() {
-				delete(InfoMap, key)
-				_, _ = s.ChannelMessageSendReply(msg.ChannelID, "Question expired", msg.Reference())
-			})
-			return
-		}
-		msg, _ := s.ChannelMessageSendEmbedReply(m.ChannelID, &discordgo.MessageEmbed{
-			Title: "Your Account is ready to be used.",
-			Image: &discordgo.MessageEmbedImage{
-				URL: pfp.URL,
-			},
-			Fields: []*discordgo.MessageEmbedField{
-				{
-					Name:  "Name",
-					Value: info.Name,
-				},
-				{
-					Name:  "New Username",
-					Value: "@" + info.Username,
-				},
-				{
-					Name:  "Bio",
-					Value: info.Bio,
-				},
-				{
-					Name:  "Url",
-					Value: info.URL,
-				},
-			},
-		}, m.Reference())
-		_, _ = s.ChannelMessageSendReply(msg.ChannelID, fmt.Sprintf("%s\n%s", "https://instagram.com/"+info.Username, info.Posts), msg.Reference())
-		delete(InfoMap, key)
-	}
-}
-
-func postMedia(attachment *discordgo.MessageAttachment, sessionId string) (string, error) {
-	timestamp := strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10)
-	request := resty.New().R()
-	response, err := request.Get(attachment.URL)
-	if err != nil {
-		return "", err
-	}
-	photo := response.Body()
-	req, err := http.NewRequest("POST", "https://i.instagram.com/rupload_igphoto/fb_uploader_"+timestamp, bytes.NewBuffer(photo))
-	if err != nil {
-		return "", err
-	}
-
-	req.Header.Set("Host", "i.instagram.com")
-	req.Header.Set("Connection", "keep-alive")
-	req.Header.Set("Content-Type", "image/jpeg")
-	req.Header.Set("Accept", "*/*")
-	req.Header.Set("X-Entity-Type", "image/jpeg")
-	req.Header.Set("X-ASBD-ID", "198387")
-	req.Header.Set("X-IG-App-ID", "936619743392459")
-	req.Header.Set("X-Instagram-AJAX", "1007055396")
-	req.Header.Set("X-Entity-Length", strconv.Itoa(len(photo)))
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("X-Entity-Name", "fb_uploader_"+timestamp)
-	req.Header.Set("Origin", "https://www.instagram.com")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.2 Safari/605.1.15")
-	req.Header.Set("Referer", "https://www.instagram.com/")
-	req.Header.Set("Offset", "0")
-	req.Header.Set("X-Instagram-Rupload-Params", fmt.Sprintf(`{"media_type":1,"upload_id":"%s","upload_media_height":318,"upload_media_width":318}`, timestamp))
-	req.AddCookie(&http.Cookie{Name: "sessionid", Value: sessionId})
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			return
-		}
-	}(resp.Body)
-
-	formData := url.Values{
-		"source_type":                   {"library"},
-		"caption":                       {""},
-		"upload_id":                     {timestamp},
-		"disable_comments":              {"0"},
-		"like_and_view_counts_disabled": {"0"},
-		"igtv_share_preview_to_feed":    {"1"},
-		"is_unified_video":              {"1"},
-		"video_subtitles_enabled":       {"0"},
-		"disable_oa_reuse":              {"false"},
-	}
-
-	reqs, err := http.NewRequest("POST", "https://www.instagram.com/api/v1/media/configure/", bytes.NewBufferString(formData.Encode()))
-	if err != nil {
-		return "", err
-	}
-
-	reqs.Header.Set("Host", "www.instagram.com")
-	reqs.Header.Set("Accept", "*/*")
-	reqs.Header.Set("X-ASBD-ID", "198387")
-	reqs.Header.Set("X-Requested-With", "XMLHttpRequest")
-	reqs.Header.Set("X-IG-App-ID", "936619743392459")
-	reqs.Header.Set("X-Instagram-AJAX", "1007055396")
-	reqs.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	reqs.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	reqs.Header.Set("Origin", "https://www.instagram.com")
-	reqs.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.2 Safari/605.1.15")
-	reqs.Header.Set("Referer", "https://www.instagram.com/y7zpsjdisjsji/")
-	reqs.Header.Set("X-IG-WWW-Claim", "hmac.AR3aUUlZDRH4FHt_roaehflyECa0AZ--MzLh1brm-OcqvpSn")
-	reqs.Header.Set("Content-Length", fmt.Sprintf("%d", len(formData.Encode())))
-	reqs.Header.Set("Connection", "keep-alive")
-	reqs.Header.Set("X-CSRFToken", "6aEqkfPKzcgL5kIZQL6mzYFc86dWtTHs")
-	reqs.AddCookie(&http.Cookie{Name: "sessionid", Value: sessionId})
-
-	clients := &http.Client{}
-	resps, err := clients.Do(reqs)
-	if err != nil {
-		return "", err
-	}
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			return
-		}
-	}(resp.Body)
-	b, err := io.ReadAll(resps.Body)
-	if err != nil {
-		return "", err
-	}
-	str := string(b)
-	if strings.Contains(str, "\"status\":\"ok\"") {
-		matches := postCodeRegex.FindStringSubmatch(str)
-		if len(matches) != 0 {
-			return matches[postCodeRegex.SubexpIndex("code")], nil
-		}
-	}
-	return "", fmt.Errorf("erro uploading photo")
-}
-func postAvatar(attachment *discordgo.MessageAttachment, sessionId string) error {
-	response, err := http.DefaultClient.Get(attachment.URL)
-	if err != nil {
-		return err
-	}
-	photo := response.Body
-	apiUrl := "https://i.instagram.com/accounts/web_change_profile_picture/"
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	part, _ := writer.CreateFormFile("profile_pic", attachment.Filename)
-	_, err = io.Copy(part, photo)
-	if err != nil {
-		return err
-	}
-	err = writer.Close()
-	if err != nil {
-		return err
-	}
-	req, _ := http.NewRequest("POST", apiUrl, body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.90 Safari/537.36")
-	req.Header.Set("x-csrftoken", "ARD4xPQFO8DvEghBR6ylbiSx7NSVwMs5")
-	req.Header.Set("X-Instagram-AJAX", "7a3a3e64fa87")
-	req.Header.Set("Cookie", fmt.Sprintf("mid=YGB8ogALAAESePCJAlGFMopcXIgR; csrftoken=ARD4xPQFO8DvEghBR6ylbiSx7NSVwMs5; sessionid=%s", sessionId))
-	client := &http.Client{}
-	resp, _ := client.Do(req)
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			return
-		}
-	}(resp.Body)
-	respBody, _ := io.ReadAll(resp.Body)
-	if bytes.Contains(respBody, []byte("has_profile_pic\":true")) {
-		return nil
-	} else {
-		return fmt.Errorf("error: Did Not Change")
-	}
-}
-
-func postChanges(info *Info) error {
-	apiUrl := "https://i.instagram.com/api/v1/accounts/edit_profile/"
-	request := resty.New().R()
-	request.SetHeaders(map[string]string{
-		"Host":              "i.instagram.com",
-		"Cookie":            "sessionid=" + info.Session,
-		"X-Ig-Capabilities": "3brTvw==",
-		"User-Agent":        "Instagram 103.1.0.15.119 Android (25/7.1.2; 240dpi; 720x1280; samsung; SM-G988N; z3q; exynos8895; en_US; 164094540)",
-		"Content-Type":      "application/x-www-form-urlencoded; charset=UTF-8",
-	})
-	randomUUID, err := uuid.NewRandom()
-	randomUUID2, err := uuid.NewRandom()
-	if err != nil {
-		return err
-	}
-	request.SetFormData(map[string]string{
-		"external_url": info.URL,
-		"phone_number": info.Phone,
-		"username":     info.Username,
-		"first_name":   info.Name,
-		"_csrftoken":   "missing",
-		"_uid":         "48403763438",
-		"device_id":    randomUUID.String(),
-		"_uuid":        randomUUID2.String(),
-		"biography":    info.Bio,
-		"email":        info.Email,
-	})
-	response, err := request.Post(apiUrl)
-	if err != nil {
-		return err
-	}
-	var JSON map[string]interface{}
-	body := response.Body()
-	err = json.Unmarshal(body, &JSON)
-	if err != nil {
-		return err
-	}
-	if status, ok := JSON["status"].(string); ok {
-		if status != "ok" {
-			if message, ok := JSON["message"].(map[string]interface{}); ok {
-				return fmt.Errorf("%s", message["errors"])
-			}
-
-			if message, ok := JSON["message"].(string); ok {
-				return fmt.Errorf("%s", message)
-			}
-		}
-		return nil
-	}
-	return fmt.Errorf("unable to unmarshal ```json\n%s\n```", body)
-}
-
-func getInfoFromSession(session string) (map[string]interface{}, error) {
-	apiUrl := "https://i.instagram.com/api/v1/accounts/current_user/?edit=true"
-	request := resty.New().R()
-	request.SetHeaders(map[string]string{
-		"Cookie":            "sessionid=" + session,
-		"X-Ig-Capabilities": "3brTvw==",
-		"X-Ig-App-Id":       "567067343352427",
-		"User-Agent":        "Instagram 103.1.0.15.119 Android (25/7.1.2; 240dpi; 720x1280; samsung; SM-G988N; z3q; exynos8895; en_US; 164094540)",
-		"Content-Type":      "application/x-www-form-urlencoded; charset=UTF-8",
-	})
-	response, err := request.Get(apiUrl)
-	if err != nil {
-		return nil, err
-	}
-	var res map[string]interface{}
-	body := response.Body()
-	err = json.Unmarshal(body, &res)
-	if err != nil {
-		return nil, err
-	}
-	if status, ok := res["status"].(string); ok {
-		if status != "ok" {
-			errTitle := res["error_title"]
-			errBody := res["error_body"]
-			message := res["message"]
-			builder := strings.Builder{}
-			if errTitle != nil {
-				builder.WriteString(errTitle.(string))
-				builder.WriteByte('\n')
-			}
-			if errBody != nil {
-				builder.WriteString(errBody.(string))
-				builder.WriteByte('\n')
-			}
-			if message != nil {
-				builder.WriteString(message.(string))
-				builder.WriteByte('\n')
-			}
-			return nil, fmt.Errorf("%s", builder.String())
-		}
-		return res["user"].(map[string]interface{}), nil
-	}
-	return nil, fmt.Errorf("unable to unmarshal ```json\n%s\n```", body)
+	commandHandlers[interaction.ApplicationCommandData().Name].Slash(session, interaction)
 }
 
 func main() {
+	commands.Acc.Config = &cnfg
 	var err error
 	discord, err = discordgo.New("Bot " + cnfg.Token)
 	if err != nil {
@@ -576,13 +142,23 @@ func main() {
 		return
 	}
 	discord.Identify.Intents |= discordgo.IntentMessageContent
-	discord.AddHandler(onReady)
-	discord.AddHandler(messageCreate)
-	discord.AddHandler(questionAnswerHandler)
+	defer discord.AddHandler(onReady)()
+	defer discord.AddHandler(messageCreate)()
+	defer discord.AddHandler(commands.Acc.QuestionAnswerHandler)()
+	defer discord.AddHandler(slashCommandInteraction)()
 	if err := discord.Open(); err != nil {
 		log.Fatal("Error opening connection", err)
 		return
 	}
+
+	for _, command := range cmds {
+		_, err := discord.ApplicationCommandCreate(discord.State.User.ID, "", command)
+		if err != nil {
+			log.Fatal("Error creating slash command", err)
+			return
+		}
+	}
+
 	log.Println("Bot is running")
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
