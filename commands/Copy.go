@@ -265,7 +265,47 @@ func (c *CopyCommand) ExecuteDash(s *discordgo.Session, m *discordgo.MessageCrea
 		_, _ = s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), m.Reference())
 		return
 	}
-	inf.Username = infoFromSession.User.Username
+
+	// ask for username
+	embed := &discordgo.MessageEmbed{
+		Description: "Do you want to set a new username?",
+		Color:       0x00ffff,
+	}
+	msg, _ := s.ChannelMessageSendComplex(m.ChannelID, &discordgo.MessageSend{
+		Reference: m.Reference(),
+		Embeds:    []*discordgo.MessageEmbed{embed},
+		Components: []discordgo.MessageComponent{
+			discordgo.ActionsRow{
+				Components: []discordgo.MessageComponent{
+					discordgo.Button{
+						Label:    "Yes",
+						Style:    discordgo.SuccessButton,
+						CustomID: "yes",
+					},
+					discordgo.Button{
+						Label:    "No",
+						Style:    discordgo.DangerButton,
+						CustomID: "no",
+					},
+				},
+			},
+		},
+	})
+	res, err := waitYesNoResponse(s, m.Author.ID, 20*time.Second, func(session *discordgo.Session, i *discordgo.InteractionCreate) {
+
+	})
+	msg, _ = s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+		Channel:    msg.ChannelID,
+		Embeds:     []*discordgo.MessageEmbed{embed},
+		Components: []discordgo.MessageComponent{},
+		ID:         msg.ID,
+		Flags:      msg.Flags,
+	})
+	if err != nil || res == "no" {
+		inf.Username = infoFromSession.User.Username
+	}
+	// end of ask for username
+
 	inf.Email = infoFromSession.User.Email
 	inf.Phone = infoFromSession.User.PhoneNumber
 	err = PostChanges(inf)
@@ -279,7 +319,7 @@ func (c *CopyCommand) ExecuteDash(s *discordgo.Session, m *discordgo.MessageCrea
 		return
 	}
 	SessionObj.Sessions = SessionObj.Sessions[1:]
-	msg, _ := s.ChannelMessageSendEmbedReply(m.ChannelID, &discordgo.MessageEmbed{
+	msg, _ = s.ChannelMessageSendEmbedReply(m.ChannelID, &discordgo.MessageEmbed{
 		Title: "Your Account is ready to be used.",
 		Image: &discordgo.MessageEmbedImage{
 			URL: inf.Pfp,
@@ -304,7 +344,7 @@ func (c *CopyCommand) ExecuteDash(s *discordgo.Session, m *discordgo.MessageCrea
 		},
 	}, m.Reference())
 	msg, _ = s.ChannelMessageSendReply(msg.ChannelID, fmt.Sprintf("%s", "https://instagram.com/"+inf.Username), msg.Reference())
-	embed := &discordgo.MessageEmbed{
+	embed = &discordgo.MessageEmbed{
 		Description: "Do you want copy the posts?",
 		Color:       0x00ffff,
 	}
@@ -328,7 +368,7 @@ func (c *CopyCommand) ExecuteDash(s *discordgo.Session, m *discordgo.MessageCrea
 			},
 		},
 	})
-	res, err := waitYesNoResponse(s, m.Author.ID, 20*time.Second)
+	res, err = waitYesNoResponse(s, m.Author.ID, 20*time.Second, nil)
 	msg, _ = s.ChannelMessageEditComplex(&discordgo.MessageEdit{
 		Channel:    msg.ChannelID,
 		Embeds:     []*discordgo.MessageEmbed{embed},
@@ -536,7 +576,7 @@ func (c *CopyCommand) ExecuteSlash(s *discordgo.Session, interaction *discordgo.
 			},
 		},
 	})
-	res, err := waitYesNoResponse(s, m.Author.ID, 20*time.Second)
+	res, err := waitYesNoResponse(s, m.Author.ID, 20*time.Second, nil)
 	m, _ = s.ChannelMessageEditComplex(&discordgo.MessageEdit{
 		Channel:    m.ChannelID,
 		Embeds:     []*discordgo.MessageEmbed{embed},
@@ -705,7 +745,7 @@ func GetInfoFromUsername(username string) (error, *info.Info) {
 	return nil, &inf
 }
 
-func waitYesNoResponse(s *discordgo.Session, userID string, timeout time.Duration) (string, error) {
+func waitYesNoResponse(s *discordgo.Session, userID string, timeout time.Duration, ifYes func(session *discordgo.Session, i *discordgo.InteractionCreate)) (string, error) {
 	res := make(chan string)
 	defer s.AddHandlerOnce(func(session *discordgo.Session, i *discordgo.InteractionCreate) {
 		_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -713,6 +753,9 @@ func waitYesNoResponse(s *discordgo.Session, userID string, timeout time.Duratio
 		})
 		if i.Type != discordgo.InteractionMessageComponent || i.Member.User.ID != userID {
 			return
+		}
+		if i.MessageComponentData().CustomID == "yes" && ifYes != nil {
+			ifYes(session, i)
 		}
 		res <- i.MessageComponentData().CustomID
 	})()
