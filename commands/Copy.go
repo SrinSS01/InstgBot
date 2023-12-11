@@ -291,8 +291,35 @@ func (c *CopyCommand) ExecuteDash(s *discordgo.Session, m *discordgo.MessageCrea
 			},
 		},
 	})
+	var modalResult = true
 	res, err := waitYesNoResponse(s, m.Author.ID, 20*time.Second, func(session *discordgo.Session, i *discordgo.InteractionCreate) {
-
+		_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseModal,
+			Data: &discordgo.InteractionResponseData{
+				CustomID: "username_" + i.Interaction.Member.User.ID,
+				Title:    "Enter Username",
+				Components: []discordgo.MessageComponent{
+					discordgo.ActionsRow{
+						Components: []discordgo.MessageComponent{
+							discordgo.TextInput{
+								CustomID:    "username",
+								Label:       "What is the username you want to set?",
+								Style:       discordgo.TextInputShort,
+								Placeholder: "an_awesome_username123",
+								Required:    true,
+								MaxLength:   300,
+								MinLength:   3,
+							},
+						},
+					},
+				},
+			},
+		})
+		response, err := waitModalResponse(s, 20*time.Second)
+		inf.Username = response
+		if err != nil {
+			modalResult = false
+		}
 	})
 	msg, _ = s.ChannelMessageEditComplex(&discordgo.MessageEdit{
 		Channel:    msg.ChannelID,
@@ -301,10 +328,143 @@ func (c *CopyCommand) ExecuteDash(s *discordgo.Session, m *discordgo.MessageCrea
 		ID:         msg.ID,
 		Flags:      msg.Flags,
 	})
-	if err != nil || res == "no" {
+	if err != nil || res == "no" || !modalResult {
 		inf.Username = infoFromSession.User.Username
 	}
 	// end of ask for username
+
+	// ask for bio
+	modalResult = true
+	embed = &discordgo.MessageEmbed{
+		Description: "Do you prefer to write specific Bio?",
+		Color:       0x00ffff,
+	}
+	msg, _ = s.ChannelMessageSendComplex(m.ChannelID, &discordgo.MessageSend{
+		Reference: msg.Reference(),
+		Embeds:    []*discordgo.MessageEmbed{embed},
+		Components: []discordgo.MessageComponent{
+			discordgo.ActionsRow{
+				Components: []discordgo.MessageComponent{
+					discordgo.Button{
+						Label:    "Yes",
+						Style:    discordgo.SuccessButton,
+						CustomID: "yes",
+					},
+					discordgo.Button{
+						Label:    "No",
+						Style:    discordgo.DangerButton,
+						CustomID: "no",
+					},
+				},
+			},
+		},
+	})
+	res, err = waitYesNoResponse(s, m.Author.ID, 20*time.Second, func(session *discordgo.Session, i *discordgo.InteractionCreate) {
+		_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseModal,
+			Data: &discordgo.InteractionResponseData{
+				CustomID: "bio_" + i.Interaction.Member.User.ID,
+				Title:    "Enter Bio",
+				Components: []discordgo.MessageComponent{
+					discordgo.ActionsRow{
+						Components: []discordgo.MessageComponent{
+							discordgo.TextInput{
+								CustomID:    "bio",
+								Label:       "What is the bio you want to set?",
+								Style:       discordgo.TextInputShort,
+								Placeholder: "An awesome cool bio.",
+								Required:    true,
+								MaxLength:   300,
+								MinLength:   1,
+							},
+						},
+					},
+				},
+			},
+		})
+		response, err := waitModalResponse(s, 20*time.Second)
+		inf.Bio = response
+		if err != nil {
+			modalResult = false
+		}
+	})
+	msg, _ = s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+		Channel:    msg.ChannelID,
+		Embeds:     []*discordgo.MessageEmbed{embed},
+		Components: []discordgo.MessageComponent{},
+		ID:         msg.ID,
+		Flags:      msg.Flags,
+	})
+	if err != nil || res == "no" || !modalResult {
+		inf.Bio = infoFromSession.User.Biography
+	}
+	// end of ask for bio
+
+	// ask for url
+	modalResult = true
+	embed = &discordgo.MessageEmbed{
+		Description: "Do you want to set an external URL?",
+		Color:       0x00ffff,
+	}
+	msg, _ = s.ChannelMessageSendComplex(m.ChannelID, &discordgo.MessageSend{
+		Reference: msg.Reference(),
+		Embeds:    []*discordgo.MessageEmbed{embed},
+		Components: []discordgo.MessageComponent{
+			discordgo.ActionsRow{
+				Components: []discordgo.MessageComponent{
+					discordgo.Button{
+						Label:    "Yes",
+						Style:    discordgo.SuccessButton,
+						CustomID: "yes",
+					},
+					discordgo.Button{
+						Label:    "No",
+						Style:    discordgo.DangerButton,
+						CustomID: "no",
+					},
+				},
+			},
+		},
+	})
+	res, err = waitYesNoResponse(s, m.Author.ID, 20*time.Second, func(session *discordgo.Session, i *discordgo.InteractionCreate) {
+		_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseModal,
+			Data: &discordgo.InteractionResponseData{
+				CustomID: "url_" + i.Interaction.Member.User.ID,
+				Title:    "Enter URL",
+				Components: []discordgo.MessageComponent{
+					discordgo.ActionsRow{
+						Components: []discordgo.MessageComponent{
+							discordgo.TextInput{
+								CustomID:    "url",
+								Label:       "What is the url you want to set?",
+								Style:       discordgo.TextInputShort,
+								Placeholder: "https://awesome_cool.url.com",
+								Required:    true,
+								MinLength:   7,
+							},
+						},
+					},
+				},
+			},
+		})
+		response, err := waitModalResponse(s, 20*time.Second)
+		inf.URL = response
+		if err != nil {
+			modalResult = false
+		}
+	})
+	msg, _ = s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+		Channel:    msg.ChannelID,
+		Embeds:     []*discordgo.MessageEmbed{embed},
+		Components: []discordgo.MessageComponent{},
+		ID:         msg.ID,
+		Flags:      msg.Flags,
+	})
+	if err != nil || res == "no" || !modalResult {
+		inf.URL = infoFromSession.User.ExternalUrl
+	}
+	// end of ask for url
 
 	inf.Email = infoFromSession.User.Email
 	inf.Phone = infoFromSession.User.PhoneNumber
@@ -504,26 +664,244 @@ func (c *CopyCommand) ExecuteSlash(s *discordgo.Session, interaction *discordgo.
 		})
 		return
 	}
-	inf.Username = infoFromSession.User.Username
+
+	// ask for username
+	embed := &discordgo.MessageEmbed{
+		Description: "Do you want to set a new username?",
+		Color:       0x00ffff,
+	}
+	msg, _ := s.InteractionResponseEdit(interaction.Interaction, &discordgo.WebhookEdit{
+		Embeds: &[]*discordgo.MessageEmbed{embed},
+		Components: &[]discordgo.MessageComponent{
+			discordgo.ActionsRow{
+				Components: []discordgo.MessageComponent{
+					discordgo.Button{
+						Label:    "Yes",
+						Style:    discordgo.SuccessButton,
+						CustomID: "yes",
+					},
+					discordgo.Button{
+						Label:    "No",
+						Style:    discordgo.DangerButton,
+						CustomID: "no",
+					},
+				},
+			},
+		},
+	})
+	var modalResult = true
+	res, err := waitYesNoResponse(s, interaction.Member.User.ID, 20*time.Second, func(session *discordgo.Session, i *discordgo.InteractionCreate) {
+		_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseModal,
+			Data: &discordgo.InteractionResponseData{
+				CustomID: "username_" + i.Interaction.Member.User.ID,
+				Title:    "Enter Username",
+				Components: []discordgo.MessageComponent{
+					discordgo.ActionsRow{
+						Components: []discordgo.MessageComponent{
+							discordgo.TextInput{
+								CustomID:    "username",
+								Label:       "What is the username you want to set?",
+								Style:       discordgo.TextInputShort,
+								Placeholder: "an_awesome_username123",
+								Required:    true,
+								MaxLength:   300,
+								MinLength:   3,
+							},
+						},
+					},
+				},
+			},
+		})
+		response, err := waitModalResponse(s, 20*time.Second)
+		inf.Username = response
+		if err != nil {
+			modalResult = false
+		}
+	})
+	msg, _ = s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+		Channel:    msg.ChannelID,
+		Embeds:     []*discordgo.MessageEmbed{embed},
+		Components: []discordgo.MessageComponent{},
+		ID:         msg.ID,
+		Flags:      msg.Flags,
+	})
+	if err != nil || res == "no" || !modalResult {
+		inf.Username = infoFromSession.User.Username
+	}
+	// end of ask for username
+
+	// ask for bio
+	modalResult = true
+	embed = &discordgo.MessageEmbed{
+		Description: "Do you prefer to write specific Bio?",
+		Color:       0x00ffff,
+	}
+	msg, _ = s.ChannelMessageSendComplex(msg.ChannelID, &discordgo.MessageSend{
+		Reference: msg.Reference(),
+		Embeds:    []*discordgo.MessageEmbed{embed},
+		Components: []discordgo.MessageComponent{
+			discordgo.ActionsRow{
+				Components: []discordgo.MessageComponent{
+					discordgo.Button{
+						Label:    "Yes",
+						Style:    discordgo.SuccessButton,
+						CustomID: "yes",
+					},
+					discordgo.Button{
+						Label:    "No",
+						Style:    discordgo.DangerButton,
+						CustomID: "no",
+					},
+				},
+			},
+		},
+	})
+	res, err = waitYesNoResponse(s, interaction.Member.User.ID, 20*time.Second, func(session *discordgo.Session, i *discordgo.InteractionCreate) {
+		_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseModal,
+			Data: &discordgo.InteractionResponseData{
+				CustomID: "bio_" + i.Interaction.Member.User.ID,
+				Title:    "Enter Bio",
+				Components: []discordgo.MessageComponent{
+					discordgo.ActionsRow{
+						Components: []discordgo.MessageComponent{
+							discordgo.TextInput{
+								CustomID:    "bio",
+								Label:       "What is the bio you want to set?",
+								Style:       discordgo.TextInputShort,
+								Placeholder: "An awesome cool bio.",
+								Required:    true,
+								MaxLength:   300,
+								MinLength:   1,
+							},
+						},
+					},
+				},
+			},
+		})
+		response, err := waitModalResponse(s, 20*time.Second)
+		inf.Bio = response
+		if err != nil {
+			modalResult = false
+		}
+	})
+	msg, _ = s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+		Channel:    msg.ChannelID,
+		Embeds:     []*discordgo.MessageEmbed{embed},
+		Components: []discordgo.MessageComponent{},
+		ID:         msg.ID,
+		Flags:      msg.Flags,
+	})
+	if err != nil || res == "no" || !modalResult {
+		inf.Bio = infoFromSession.User.Biography
+	}
+	// end of ask for bio
+
+	// ask for url
+	modalResult = true
+	embed = &discordgo.MessageEmbed{
+		Description: "Do you want to set an external URL?",
+		Color:       0x00ffff,
+	}
+	msg, _ = s.ChannelMessageSendComplex(msg.ChannelID, &discordgo.MessageSend{
+		Reference: msg.Reference(),
+		Embeds:    []*discordgo.MessageEmbed{embed},
+		Components: []discordgo.MessageComponent{
+			discordgo.ActionsRow{
+				Components: []discordgo.MessageComponent{
+					discordgo.Button{
+						Label:    "Yes",
+						Style:    discordgo.SuccessButton,
+						CustomID: "yes",
+					},
+					discordgo.Button{
+						Label:    "No",
+						Style:    discordgo.DangerButton,
+						CustomID: "no",
+					},
+				},
+			},
+		},
+	})
+	res, err = waitYesNoResponse(s, interaction.Member.User.ID, 20*time.Second, func(session *discordgo.Session, i *discordgo.InteractionCreate) {
+		_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseModal,
+			Data: &discordgo.InteractionResponseData{
+				CustomID: "url_" + i.Interaction.Member.User.ID,
+				Title:    "Enter URL",
+				Components: []discordgo.MessageComponent{
+					discordgo.ActionsRow{
+						Components: []discordgo.MessageComponent{
+							discordgo.TextInput{
+								CustomID:    "url",
+								Label:       "What is the url you want to set?",
+								Style:       discordgo.TextInputShort,
+								Placeholder: "https://awesome_cool.url.com",
+								Required:    true,
+								MinLength:   7,
+							},
+						},
+					},
+				},
+			},
+		})
+		response, err := waitModalResponse(s, 20*time.Second)
+		inf.URL = response
+		if err != nil {
+			modalResult = false
+		}
+	})
+	msg, _ = s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+		Channel:    msg.ChannelID,
+		Embeds:     []*discordgo.MessageEmbed{embed},
+		Components: []discordgo.MessageComponent{},
+		ID:         msg.ID,
+		Flags:      msg.Flags,
+	})
+	if err != nil || res == "no" || !modalResult {
+		inf.URL = infoFromSession.User.ExternalUrl
+	}
+	// end of ask for url
+
+	//inf.Username = infoFromSession.User.Username
 	inf.Email = infoFromSession.User.Email
 	inf.Phone = infoFromSession.User.PhoneNumber
 	err = PostChanges(inf)
 	if err != nil {
-		errorStr := fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error())
-		_, _ = s.InteractionResponseEdit(interaction.Interaction, &discordgo.WebhookEdit{
-			Content: &errorStr,
-		})
+		_, _ = s.ChannelMessageSendReply(msg.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), msg.Reference())
 		return
 	}
 	err = PostAvatar(inf.Pfp, fmt.Sprintf("%d.png", time.Now().Unix()), inf.Session)
 	if err != nil {
-		errorStr := fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error())
-		_, _ = s.InteractionResponseEdit(interaction.Interaction, &discordgo.WebhookEdit{
-			Content: &errorStr,
-		})
+		_, _ = s.ChannelMessageSendReply(msg.ChannelID, fmt.Sprintf("```\n%s\n```\nPlease try again", err.Error()), msg.Reference())
 		return
 	}
-	m, _ := s.InteractionResponseEdit(interaction.Interaction, &discordgo.WebhookEdit{
+	m, _ := s.ChannelMessageSendEmbedReply(msg.ChannelID, &discordgo.MessageEmbed{
+		Title: "Your Account is ready to be used.",
+		Image: &discordgo.MessageEmbedImage{
+			URL: inf.Pfp,
+		},
+		Fields: []*discordgo.MessageEmbedField{
+			{
+				Name:  "Name",
+				Value: inf.Name,
+			},
+			{
+				Name:  "New Username",
+				Value: "@" + inf.Username,
+			},
+			{
+				Name:  "Bio",
+				Value: inf.Bio,
+			},
+			{
+				Name:  "Url",
+				Value: inf.URL,
+			},
+		},
+	}, msg.Reference())
+	/*s.InteractionResponseEdit(interaction.Interaction, &discordgo.WebhookEdit{
 		Embeds: &[]*discordgo.MessageEmbed{
 			{
 				Title: "Your Account is ready to be used.",
@@ -550,9 +928,9 @@ func (c *CopyCommand) ExecuteSlash(s *discordgo.Session, interaction *discordgo.
 				},
 			},
 		},
-	})
+	})*/
 	m, _ = s.ChannelMessageSendReply(m.ChannelID, fmt.Sprintf("%s", "https://instagram.com/"+inf.Username), m.Reference())
-	embed := &discordgo.MessageEmbed{
+	embed = &discordgo.MessageEmbed{
 		Description: "Do you want copy the posts?",
 		Color:       0x00ffff,
 	}
@@ -576,7 +954,7 @@ func (c *CopyCommand) ExecuteSlash(s *discordgo.Session, interaction *discordgo.
 			},
 		},
 	})
-	res, err := waitYesNoResponse(s, m.Author.ID, 20*time.Second, nil)
+	res, err = waitYesNoResponse(s, m.Author.ID, 20*time.Second, nil)
 	m, _ = s.ChannelMessageEditComplex(&discordgo.MessageEdit{
 		Channel:    m.ChannelID,
 		Embeds:     []*discordgo.MessageEmbed{embed},
@@ -748,9 +1126,9 @@ func GetInfoFromUsername(username string) (error, *info.Info) {
 func waitYesNoResponse(s *discordgo.Session, userID string, timeout time.Duration, ifYes func(session *discordgo.Session, i *discordgo.InteractionCreate)) (string, error) {
 	res := make(chan string)
 	defer s.AddHandlerOnce(func(session *discordgo.Session, i *discordgo.InteractionCreate) {
-		_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseDeferredMessageUpdate,
-		})
+		//_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		//	Type: discordgo.InteractionResponseDeferredMessageUpdate,
+		//})
 		if i.Type != discordgo.InteractionMessageComponent || i.Member.User.ID != userID {
 			return
 		}
@@ -758,6 +1136,27 @@ func waitYesNoResponse(s *discordgo.Session, userID string, timeout time.Duratio
 			ifYes(session, i)
 		}
 		res <- i.MessageComponentData().CustomID
+	})()
+	timer := time.NewTimer(timeout)
+	select {
+	case r := <-res:
+		timer.Stop()
+		return r, nil
+	case <-timer.C:
+		return "", fmt.Errorf("timeout")
+	}
+}
+func waitModalResponse(s *discordgo.Session, timeout time.Duration) (string, error) {
+	res := make(chan string)
+	defer s.AddHandlerOnce(func(session *discordgo.Session, i *discordgo.InteractionCreate) {
+		if i.Type != discordgo.InteractionModalSubmit {
+			return
+		}
+		_ = session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseDeferredMessageUpdate,
+		})
+		data := i.ModalSubmitData()
+		res <- data.Components[0].(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput).Value
 	})()
 	timer := time.NewTimer(timeout)
 	select {
